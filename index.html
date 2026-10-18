@@ -1574,7 +1574,8 @@
         try { state.ws.close(); } catch (_) {}
       }
 
-      updateConnectionStatus('connecting');
+      // Badge is owned by pollBotStatus until the WS actually opens (LIVE).
+      // WS retry failures must not overwrite ONLINE/OFFLINE.
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${proto}//${window.location.host}`;
 
@@ -1595,16 +1596,17 @@
         };
 
         state.ws.onclose = () => {
-          updateConnectionStatus('disconnected');
+          state.wsConnected = false;
+          pollBotStatus();
           scheduleReconnect();
         };
 
         state.ws.onerror = () => {
-          updateConnectionStatus('disconnected');
           try { state.ws.close(); } catch (_) {}
         };
       } catch (err) {
-        updateConnectionStatus('disconnected');
+        state.wsConnected = false;
+        pollBotStatus();
         scheduleReconnect();
       }
     }
