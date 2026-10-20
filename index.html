@@ -1334,15 +1334,50 @@
 
     // --- DATA FETCHING HELPER ---
     // GitHub snapshot (used when the local API / WebSocket isn't available, e.g. Netlify)
-    // raw.githubusercontent.com caches ~5 min and ignores query strings — use the API with a cache-buster
-    function ghStatusUrl() { return 'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/status.json?cb=' + Date.now(); }
-    function ghMarketUrl() { return 'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/market.json?cb=' + Date.now(); }
-    const GH_RAW_OPTS = { headers: { 'Accept': 'application/vnd.github.raw' }, cache: 'no-store' };
+    // api.github.com is 60 unauth req/hr — use CDNs (jsDelivr/statically) with cache-bust first
+    var GH_STATUS_MIRRORS = [
+      'https://cdn.jsdelivr.net/gh/LemonDahGoat/yapper-stonks-status@main/status.json',
+      'https://cdn.statically.io/gh/LemonDahGoat/yapper-stonks-status/main/status.json',
+      'https://raw.githubusercontent.com/LemonDahGoat/yapper-stonks-status/main/status.json',
+      'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/status.json'
+    ];
+    var GH_MARKET_MIRRORS = [
+      'https://cdn.jsdelivr.net/gh/LemonDahGoat/yapper-stonks-status@main/market.json',
+      'https://cdn.statically.io/gh/LemonDahGoat/yapper-stonks-status/main/market.json',
+      'https://raw.githubusercontent.com/LemonDahGoat/yapper-stonks-status/main/market.json',
+      'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/market.json'
+    ];
+
+    function fetchMirror(url) {
+      var opts = { cache: 'no-store' };
+      if (url.indexOf('api.github.com') >= 0) {
+        opts.headers = { 'Accept': 'application/vnd.github.raw' };
+      }
+      var u = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'cb=' + Date.now();
+      return fetch(u, opts).then(function (r) {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      });
+    }
+
+    function bestJson(mirrors) {
+      var settled = 0, best = null;
+      return new Promise(function (resolve, reject) {
+        mirrors.forEach(function (url) {
+          fetchMirror(url).then(function (j) {
+            if (!best || (Number(j.timestamp) || 0) > (Number(best.timestamp) || 0)) best = j;
+          }).catch(function () {}).then(function () {
+            settled++;
+            if (settled === mirrors.length) {
+              if (best) resolve(best); else reject(new Error('all mirrors failed'));
+            }
+          });
+        });
+      });
+    }
 
     async function ghApi(path) {
-      const res = await fetch(ghMarketUrl(), GH_RAW_OPTS);
-      if (!res.ok) throw new Error('GH market fetch failed');
-      const snap = await res.json();
+      const snap = await bestJson(GH_MARKET_MIRRORS);
       if (path === '/market') return snap.stocks || [];
       if (path === '/stats') return snap.stats || {};
       if (path === '/transactions') return snap.transactions || [];
@@ -1560,8 +1595,7 @@
     async function pollBotStatus() {
       if (state.wsConnected) return; // live WS takes priority
       try {
-        const res = await fetch(ghStatusUrl(), GH_RAW_OPTS);
-        const j = await res.json();
+        const j = await bestJson(GH_STATUS_MIRRORS);
         const fresh = Date.now() - (Number(j.timestamp) || 0) < 150000; // 2.5 min
         updateConnectionStatus((j.online && fresh) ? 'bot-online' : 'bot-offline');
       } catch (e) {
