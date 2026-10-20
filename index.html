@@ -1334,11 +1334,13 @@
 
     // --- DATA FETCHING HELPER ---
     // GitHub snapshot (used when the local API / WebSocket isn't available, e.g. Netlify)
-    const GH_STATUS_URL = 'https://raw.githubusercontent.com/LemonDahGoat/yapper-stonks-status/main/status.json';
-    const GH_MARKET_URL = 'https://raw.githubusercontent.com/LemonDahGoat/yapper-stonks-status/main/market.json';
+    // raw.githubusercontent.com caches ~5 min and ignores query strings — use the API with a cache-buster
+    function ghStatusUrl() { return 'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/status.json?cb=' + Date.now(); }
+    function ghMarketUrl() { return 'https://api.github.com/repos/LemonDahGoat/yapper-stonks-status/contents/market.json?cb=' + Date.now(); }
+    const GH_RAW_OPTS = { headers: { 'Accept': 'application/vnd.github.raw' }, cache: 'no-store' };
 
     async function ghApi(path) {
-      const res = await fetch(GH_MARKET_URL + '?_=' + Date.now(), { cache: 'no-store' });
+      const res = await fetch(ghMarketUrl(), GH_RAW_OPTS);
       if (!res.ok) throw new Error('GH market fetch failed');
       const snap = await res.json();
       if (path === '/market') return snap.stocks || [];
@@ -1558,7 +1560,7 @@
     async function pollBotStatus() {
       if (state.wsConnected) return; // live WS takes priority
       try {
-        const res = await fetch(GH_STATUS_URL + '?_=' + Date.now(), { cache: 'no-store' });
+        const res = await fetch(ghStatusUrl(), GH_RAW_OPTS);
         const j = await res.json();
         const fresh = Date.now() - (Number(j.timestamp) || 0) < 150000; // 2.5 min
         updateConnectionStatus((j.online && fresh) ? 'bot-online' : 'bot-offline');
